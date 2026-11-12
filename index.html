@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>弓道100マス</title>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;font-family:-apple-system,"Hiragino Sans",sans-serif;background:#f4f1ea;color:#222;padding:12px 10px 60px}
+  h1{font-size:18px;margin:0}
+  h2{font-size:15px;margin:16px 0 6px}
+  .card{background:#fff;border-radius:12px;padding:10px;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .stats{display:flex;gap:8px;margin-top:8px}
+  .stat{flex:1;background:#fff;border-radius:12px;padding:8px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .stat b{display:block;font-size:22px}
+  .stat span{font-size:11px;color:#666}
+  button{font-size:16px;padding:12px 10px;border:0;border-radius:10px;background:#2f5d50;color:#fff;min-height:46px}
+  button.sub{background:#e3ded2;color:#222}
+  button.danger{background:#b3402f}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .row button{flex:1;min-width:46%}
+  input[type=text],input[type=number]{font-size:16px;padding:10px;border:1px solid #bbb;border-radius:8px;width:100%}
+  input[type=color]{width:46px;height:46px;border:0;padding:0;background:none}
+  #board{display:grid;grid-template-columns:repeat(11,1fr);gap:2px;margin-top:8px;touch-action:manipulation}
+  .h{background:#2f5d50;color:#fff;font-weight:bold;text-align:center;display:flex;align-items:center;justify-content:center;aspect-ratio:1;font-size:15px;border-radius:4px}
+  .c{aspect-ratio:1;border-radius:4px;background:#fff;border:1px solid #d6d0c2;font-size:11px;padding:0;color:#222;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;line-height:1}
+  .c.dim{opacity:.25}
+  .p{display:flex;align-items:center;gap:8px;padding:8px;border-radius:10px;margin-top:6px;border:2px solid transparent;background:#faf8f3}
+  .p.sel{border-color:#2f5d50;background:#eaf3ef}
+  .p.other{opacity:.75}
+  .dot{width:22px;height:22px;border-radius:50%;flex:none}
+  .p .n{flex:1;font-size:15px;min-width:0}
+  .p small{color:#555}
+  .p .x{background:#e3ded2;color:#b3402f;padding:6px 10px;min-height:36px;font-size:14px}
+  .p .lim{width:58px;padding:6px;font-size:15px}
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .badge{font-size:12px;padding:3px 8px;border-radius:10px;background:#e3ded2}
+  .badge.admin{background:#2f5d50;color:#fff}
+  .sync{width:10px;height:10px;border-radius:50%;background:#bbb;display:inline-block}
+  .sync.on{background:#2fb344}
+  .lock{background:#fff3cd;border-radius:10px;padding:8px;margin-top:8px;font-size:14px}
+  .gl{display:block;width:100%;text-align:left;background:#faf8f3;color:#222;margin-top:6px}
+  .gl small{color:#666;display:block}
+  #modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:20;padding:20px}
+  #modal .box{background:#fff;border-radius:14px;padding:18px;width:100%;max-width:340px}
+  #modal p{margin:0 0 14px;font-size:16px;line-height:1.5}
+  #modal .row button{min-width:0}
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#222;color:#fff;padding:10px 16px;border-radius:20px;font-size:14px;display:none;z-index:30;max-width:90%;text-align:center}
+  .seg{display:flex;gap:6px;margin-top:8px}
+  .seg button{flex:1;padding:8px;min-height:38px;font-size:14px}
+  .seg button.on{background:#2f5d50;color:#fff}
+  #loading{text-align:center;color:#666;margin-top:60px}
+</style>
+</head>
+<body>
+
+<div id="loading">読み込み中…</div>
+
+<!-- ホーム画面 -->
+<div id="home" style="display:none">
+  <h1>🏹 弓道100マス</h1>
+  <h2>新しいゲームを作る</h2>
+  <div class="card">
+    <input type="text" id="gname" placeholder="大会名（例：秋季大会）">
+    <div class="row"><button id="createG">ゲームを作成（あなたが管理者）</button></div>
+  </div>
+  <h2>参加中のゲーム</h2>
+  <div class="card" id="glist"></div>
+  <div style="font-size:12px;color:#666;margin-top:10px">友だちのゲームに入るには、共有されたURLを開いてください。</div>
+</div>
+
+<!-- ゲーム画面 -->
+<div id="game" style="display:none">
+  <div class="bar">
+    <button class="sub" id="back" style="min-height:38px;padding:6px 12px;font-size:14px">← ホーム</button>
+    <div><span class="sync" id="sync"></span> <span class="badge" id="role"></span></div>
+  </div>
+  <h1 id="gtitle" style="margin-top:8px"></h1>
+
+  <div class="stats">
+    <div class="stat"><b id="sPlayers">0</b><span>参加者数</span></div>
+    <div class="stat"><b id="sTaken">0</b><span>選択済み</span></div>
+    <div class="stat"><b id="sFree">100</b><span>空きマス</span></div>
+  </div>
+  <div class="lock" id="lockBar" style="display:none">🔒 ロック中です（管理者のみ変更できます）</div>
+
+  <h2>盤面</h2>
+  <div class="card">
+    <div id="cur" style="font-size:14px"></div>
+    <div class="seg" id="filter">
+      <button data-f="all" class="on">すべて</button>
+      <button data-f="free">空きだけ</button>
+      <button data-f="taken">選択済み</button>
+    </div>
+    <div id="board"></div>
+    <div class="row" id="adminRow">
+      <button class="sub" id="shX">横軸シャッフル</button>
+      <button class="sub" id="shY">縦軸シャッフル</button>
+      <button class="sub" id="shB">両軸シャッフル</button>
+      <button class="sub" id="lockBtn">ロックする</button>
+    </div>
+  </div>
+
+  <h2>参加者</h2>
+  <div class="card">
+    <div id="plist"></div>
+    <div class="row" style="align-items:center">
+      <input type="text" id="pname" placeholder="あなたの名前" style="flex:2;min-width:40%">
+      <input type="color" id="pcolor" value="#e76f51">
+    </div>
+    <div class="row"><button id="addP">参加者として追加</button></div>
+    <div style="font-size:12px;color:#666;margin-top:6px">上限マス数は管理者だけが変更できます（初期値10）。</div>
+  </div>
+
+  <h2>友だちを招待</h2>
+  <div class="card">
+    <input type="text" id="shareUrl" readonly onclick="this.select()">
+    <div class="row">
+      <button id="copyUrl" class="sub">URLをコピー</button>
+      <button id="shareBtn">LINEなどで共有</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal"><div class="box"><p id="mmsg"></p><div class="row"><button class="sub" id="mno">やめる</button><button id="myes">実行する</button></div></div></div>
+<div id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+  // ====== 設定（Supabaseの接続情報） ======
+  var SUPABASE_URL="https://zevrilbeplxnnfauihqk.supabase.co";
+  var SUPABASE_KEY="sb_publishable_m1X6uhOnuL9X4oKhXj47Ig_gyI3ZXWy";
+  // =========================================
+
+  var PALETTE=["#e76f51","#2a9d8f","#e9c46a","#457b9d","#9b5de5","#f28482"];
+  var sb, me=null, gid=null, game=null, players=[], cells={}, filter="all", curP=null;
+  var ch=null, loadTimer=null, pollTimer=null;
+
+  function $(id){return document.getElementById(id);}
+  function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+  function toast(m){var t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(toast.t);toast.t=setTimeout(function(){t.style.display="none";},2400);}
+  function ask(msg,ok){
+    $("mmsg").textContent=msg;$("modal").style.display="flex";
+    $("mno").onclick=function(){$("modal").style.display="none";};
+    $("myes").onclick=function(){$("modal").style.display="none";ok();};
+  }
+  function showView(v){
+    $("loading").style.display=v==="loading"?"block":"none";
+    $("home").style.display=v==="home"?"block":"none";
+    $("game").style.display=v==="game"?"block":"none";
+  }
+  function fatal(m){$("loading").textContent=m;showView("loading");}
+  function shuffled(){
+    var a=[0,1,2,3,4,5,6,7,8,9];
+    for(var i=9;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}
+    return a;
+  }
+  function errText(e){
+    var m=(e&&e.message)||"";
+    if(e&&e.code==="23505")return "他の人が先に選びました";
+    if(m.indexOf("cell limit")>=0)return "上限マス数に達しています";
+    if(m.indexOf("admin only")>=0)return "管理者だけが変更できます";
+    if(m.indexOf("row-level security")>=0)return "この操作は許可されていません（ロック中など）";
+    return "エラー: "+m;
+  }
+  function isAdmin(){return !!(game&&me&&game.admin_id===me.id);}
+  function getP(id){for(var i=0;i<players.length;i++)if(players[i].id===id)return players[i];return null;}
+  function canUse(p){return !!(p&&(p.user_id===me.id||isAdmin()));}
+  function countOf(id){var n=0;for(var k in cells)if(cells[k]===id)n++;return n;}
+  function shareUrl(){return location.origin+location.pathname+"?g="+gid;}
+
+  // ---------- 起動 ----------
+  async function init(){
+    if(!window.supabase){fatal("通信ライブラリを読み込めませんでした。ネットワークを確認して、再読み込みしてください。");return;}
+    sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+    try{
+      var s=await sb.auth.getSession();
+      if(s.data&&s.data.session){me=s.data.session.user;}
+      else{
+        var r=await sb.auth.signInAnonymously();
+        if(r.error){fatal("ログインに失敗しました："+r.error.message);return;}
+        me=r.data.user;
+      }
+    }catch(e){fatal("ログインに失敗しました："+e.message);return;}
+    var g=new URLSearchParams(location.search).get("g");
+    if(g)await openGame(g);else await showHome();
+  }
+
+  // ---------- ホーム ----------
+  async function showHome(){
+    unsubscribe();gid=null;game=null;
+    try{history.replaceState(null,"",location.pathname);}catch(e){}
+    showView("home");
+    var r=await sb.from("games").select("id,name,created_at").order("created_at",{ascending:false});
+    var box=$("glist");
+    if(r.error){box.textContent="一覧を読み込めませんでした";return;}
+    if(!r.data.length){box.innerHTML='<div style="color:#666;font-size:14px">まだゲームがありません</div>';return;}
+    box.innerHTML="";
+    r.data.forEach(function(g){
+      var b=document.createElement("button");b.className="gl";b.dataset.id=g.id;
+      b.innerHTML=esc(g.name)+"<small>"+new Date(g.created_at).toLocaleDateString("ja-JP")+"</small>";
+      box.appendChild(b);
+    });
+  }
+  $("glist").addEventListener("click",function(e){
+    var b=e.target.closest("button");if(b&&b.dataset.id)openGame(b.dataset.id);
+  });
+  $("createG").onclick=async function(){
+    var name=$("gname").value.trim()||"新しいゲーム";
+    var r=await sb.from("games").insert({name:name,axis_x:shuffled(),axis_y:shuffled()}).select().single();
+    if(r.error){toast(errText(r.error));return;}
+    $("gname").value="";
+    await openGame(r.data.id);
+  };
+  $("back").onclick=function(){showHome();};
+
+  // ---------- ゲームを開く ----------
+  async function openGame(id){
+    if(!/^[0-9a-f-]{36}$/i.test(id)){toast("URLが正しくありません");await showHome();return;}
+    showView("loading");$("loading").textContent="読み込み中…";
+    var j=await sb.rpc("join_game",{g:id});
+    if(j.error){toast("ゲームに参加できません。URLを確認してください");await showHome();return;}
+    gid=id;curP=null;
+    try{history.replaceState(null,"","?g="+id);}catch(e){}
+    var ok=await reload();
+    if(!ok){await showHome();return;}
+    subscribe();
+    showView("game");
+  }
+
+  async function reload(){
+    if(!gid)return false;
+    var a=await sb.from("games").select("*").eq("id",gid).maybeSingle();
+    var b=await sb.from("players").select("*").eq("game_id",gid);
+    var c=await sb.from("cells").select("*").eq("game_id",gid);
+    if(a.error||b.error||c.error){toast("同期に失敗しました");return !!game;}
+    if(!a.data){toast("ゲームが見つかりません");game=null;return false;}
+    game=a.data;
+    players=b.data.slice().sort(function(x,y){return x.name.localeCompare(y.name,"ja");});
+    cells={};
+    c.data.forEach(function(r){cells[r.row_no+"-"+r.col_no]=r.player_id;});
+    if(!curP||!getP(curP)){
+      var mine=players.filter(function(p){return p.user_id===me.id;})[0];
+      curP=mine?mine.id:null;
+    }
+    renderGame();
+    return true;
+  }
+
+  // ---------- リアルタイム同期 ----------
+  function scheduleLoad(){clearTimeout(loadTimer);loadTimer=setTimeout(reload,150);}
+  function subscribe(){
+    unsubscribe();
+    ch=sb.channel("game-"+gid)
+      .on("postgres_changes",{event:"*",schema:"public",table:"games"},scheduleLoad)
+      .on("postgres_changes",{event:"*",schema:"public",table:"players"},scheduleLoad)
+      .on("postgres_changes",{event:"*",schema:"public",table:"cells"},scheduleLoad)
+      .subscribe(function(status){$("sync").classList.toggle("on",status==="SUBSCRIBED");});
+    pollTimer=setInterval(function(){if(gid&&!document.hidden)reload();},20000);
+  }
+  function unsubscribe(){
+    if(ch){try{sb.removeChannel(ch);}catch(e){}ch=null;}
+    clearInterval(pollTimer);clearTimeout(loadTimer);
+    $("sync").classList.remove("on");
+  }
+  document.addEventListener("visibilitychange",function(){if(!document.hidden&&gid)reload();});
+
+  // ---------- 画面描画 ----------
+  function renderGame(){
+    var total=Object.keys(cells).length;
+    $("gtitle").textContent=game.name;
+    $("role").textContent=isAdmin()?"管理者":"参加者";
+    $("role").className="badge"+(isAdmin()?" admin":"");
+    $("sPlayers").textContent=players.length;
+    $("sTaken").textContent=total;
+    $("sFree").textContent=100-total;
+    $("lockBar").style.display=game.locked?"block":"none";
+    $("adminRow").style.display=isAdmin()?"flex":"none";
+    $("lockBtn").textContent=game.locked?"ロック解除":"ロックする";
+    $("shareUrl").value=shareUrl();
+
+    var cp=getP(curP);
+    $("cur").innerHTML=cp?'選ぶ人：<b style="color:'+esc(cp.color)+'">● '+esc(cp.name)+'</b>（残り '+(cp.cell_limit-countOf(cp.id))+'マス）':"選ぶ人：未選択（下で参加者として追加してください）";
+
+    var b=$("board");b.innerHTML="";
+    var corner=document.createElement("div");corner.className="h";b.appendChild(corner);
+    for(var c=0;c<10;c++){var h=document.createElement("div");h.className="h";h.textContent=game.axis_x[c];b.appendChild(h);}
+    for(var r=0;r<10;r++){
+      var hy=document.createElement("div");hy.className="h";hy.textContent=game.axis_y[r];b.appendChild(hy);
+      for(var c2=0;c2<10;c2++){
+        var key=r+"-"+c2,owner=getP(cells[key]);
+        var btn=document.createElement("button");btn.className="c";btn.dataset.k=key;
+        if(owner){btn.style.background=owner.color;btn.textContent=owner.name.slice(0,2);}
+        var taken=!!cells[key];
+        if((filter==="free"&&taken)||(filter==="taken"&&!taken))btn.classList.add("dim");
+        b.appendChild(btn);
+      }
+    }
+
+    var pl=$("plist");pl.innerHTML="";
+    players.forEach(function(p){
+      var d=document.createElement("div");
+      d.className="p"+(p.id===curP?" sel":"")+(canUse(p)?"":" other");d.dataset.id=p.id;
+      var limHtml=isAdmin()?'<input class="lim" type="number" min="1" max="100" value="'+p.cell_limit+'" data-lim="'+p.id+'">':"";
+      var delHtml=canUse(p)?'<button class="x" data-del="'+p.id+'">削除</button>':"";
+      d.innerHTML='<span class="dot" style="background:'+esc(p.color)+'"></span><span class="n">'+esc(p.name)+(p.user_id===me.id?" （あなた）":"")+'<br><small>'+countOf(p.id)+' / '+p.cell_limit+' マス</small></span>'+limHtml+delHtml;
+      pl.appendChild(d);
+    });
+    if(!players.length)pl.innerHTML='<div style="color:#666;font-size:14px">まだ参加者がいません</div>';
+    $("pcolor").value=$("pcolor").dataset.set||PALETTE[players.length%PALETTE.length];
+  }
+
+  // ---------- マス選択 ----------
+  $("board").addEventListener("click",async function(e){
+    var k=e.target.dataset&&e.target.dataset.k;if(!k)return;
+    var cp=getP(curP);
+    if(!cp){toast("先に参加者として追加してください");return;}
+    var parts=k.split("-"),row=Number(parts[0]),col=Number(parts[1]);
+    var owner=cells[k];
+    if(owner){
+      if(owner!==cp.id){var op=getP(owner);toast("「"+(op?op.name:"他の人")+"」さんが選択済みです");return;}
+      delete cells[k];renderGame();
+      var d=await sb.from("cells").delete().eq("game_id",gid).eq("row_no",row).eq("col_no",col);
+      if(d.error){toast(errText(d.error));reload();}
+      return;
+    }
+    if(game.locked&&!isAdmin()){toast("ロック中です");return;}
+    if(countOf(cp.id)>=cp.cell_limit){toast("上限("+cp.cell_limit+"マス)に達しています");return;}
+    cells[k]=cp.id;renderGame();
+    var r=await sb.from("cells").insert({game_id:gid,row_no:row,col_no:col,player_id:cp.id});
+    if(r.error){toast(errText(r.error));reload();}
+  });
+
+  $("filter").addEventListener("click",function(e){
+    var f=e.target.dataset&&e.target.dataset.f;if(!f)return;
+    filter=f;
+    var bs=$("filter").children;for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].dataset.f===f);
+    renderGame();
+  });
+
+  // ---------- 参加者 ----------
+  $("plist").addEventListener("click",function(e){
+    var del=e.target.dataset&&e.target.dataset.del;
+    if(del){
+      var p=getP(del);
+      if(p)ask("「"+p.name+"」を削除します。選んだマスも空きに戻ります。よろしいですか？",async function(){
+        var r=await sb.from("players").delete().eq("id",p.id);
+        if(r.error)toast(errText(r.error));
+        if(curP===p.id)curP=null;
+        reload();
+      });
+      return;
+    }
+    if(e.target.dataset&&e.target.dataset.lim)return;
+    var row=e.target.closest(".p");
+    if(row){
+      var q=getP(row.dataset.id);
+      if(canUse(q)){curP=q.id;renderGame();}
+      else toast("他の人の参加者は選べません");
+    }
+  });
+  $("plist").addEventListener("change",async function(e){
+    var id=e.target.dataset&&e.target.dataset.lim;if(!id)return;
+    var v=parseInt(e.target.value,10);
+    if(!(v>=1&&v<=100)){toast("上限は1〜100で入力してください");reload();return;}
+    var r=await sb.from("players").update({cell_limit:v}).eq("id",id);
+    if(r.error)toast(errText(r.error));
+    reload();
+  });
+  $("pcolor").addEventListener("input",function(){$("pcolor").dataset.set=$("pcolor").value;});
+  $("addP").onclick=async function(){
+    var name=$("pname").value.trim();
+    if(!name){toast("名前を入力してください");return;}
+    var rec={game_id:gid,name:name,color:$("pcolor").value};
+    var r=await sb.from("players").insert(rec).select().single();
+    if(r.error){toast(errText(r.error));return;}
+    $("pname").value="";delete $("pcolor").dataset.set;
+    curP=r.data.id;
+    reload();
+  };
+
+  // ---------- 管理者操作 ----------
+  function doShuffle(which,label){
+    var extra=Object.keys(cells).length?"（すでに選ばれたマスがあります）":"";
+    ask(label+"をシャッフルします"+extra+"。数字の配置が変わりますがよろしいですか？",async function(){
+      var upd={};
+      if(which!=="y")upd.axis_x=shuffled();
+      if(which!=="x")upd.axis_y=shuffled();
+      var r=await sb.from("games").update(upd).eq("id",gid);
+      if(r.error){toast(errText(r.error));return;}
+      toast("シャッフルしました");reload();
+    });
+  }
+  $("shX").onclick=function(){doShuffle("x","横軸");};
+  $("shY").onclick=function(){doShuffle("y","縦軸");};
+  $("shB").onclick=function(){doShuffle("b","両軸");};
+  $("lockBtn").onclick=function(){
+    var to=!game.locked;
+    ask(to?"盤面をロックします。参加者はマスを変更できなくなります。":"ロックを解除します。",async function(){
+      var r=await sb.from("games").update({locked:to}).eq("id",gid);
+      if(r.error){toast(errText(r.error));return;}
+      reload();
+    });
+  };
+
+  // ---------- 共有 ----------
+  $("copyUrl").onclick=async function(){
+    try{await navigator.clipboard.writeText(shareUrl());toast("URLをコピーしました");}
+    catch(e){$("shareUrl").select();toast("URLを長押ししてコピーしてください");}
+  };
+  $("shareBtn").onclick=async function(){
+    if(navigator.share){
+      try{await navigator.share({title:game.name,text:"弓道100マスに参加してください",url:shareUrl()});}catch(e){}
+    }else{
+      try{await navigator.clipboard.writeText(shareUrl());toast("URLをコピーしました");}catch(e){toast("URLを長押ししてコピーしてください");}
+    }
+  };
+
+  init();
+})();
+</script>
+</body>
+</html>
