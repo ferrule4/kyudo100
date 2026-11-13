@@ -50,6 +50,33 @@
   .seg button{flex:1;padding:8px;min-height:38px;font-size:14px}
   .seg button.on{background:#2f5d50;color:#fff}
   #loading{text-align:center;color:#666;margin-top:60px}
+  .tabs{display:flex;gap:6px;margin-top:10px}
+  .tabs button{flex:1;background:#e3ded2;color:#222}
+  .tabs button.on{background:#2f5d50;color:#fff}
+  .rl{font-size:13px;font-weight:bold;color:#2f5d50;margin:14px 0 4px}
+  .m{background:#fff;border-radius:12px;padding:10px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.12);border-left:6px solid #d6d0c2}
+  .m.live{border-left-color:#e9a23b}
+  .m.done{border-left-color:#2f5d50}
+  .mh{display:flex;gap:6px;align-items:center;font-size:12px;color:#666;margin-bottom:6px}
+  .mh .no{font-weight:bold}
+  .mh input,.mh select{font-size:14px;padding:6px;border:1px solid #bbb;border-radius:8px;min-width:0}
+  .mh .rlin{flex:1}
+  .mh button{padding:4px 10px;min-height:34px;font-size:14px}
+  .side{display:flex;gap:6px;align-items:center;margin-top:6px}
+  .side input[type=text]{flex:1;min-width:0;padding:8px}
+  .side input[type=number]{width:56px;padding:8px;text-align:center}
+  .side .w{min-width:58px;padding:8px 6px;font-size:14px;min-height:40px;background:#e3ded2;color:#222}
+  .side .w.win{background:#2f5d50;color:#fff}
+  .side label{font-size:12px;color:#444;white-space:nowrap}
+  .side .nm{flex:1;font-size:16px;min-width:0}
+  .side .nm.win{font-weight:bold;color:#2f5d50}
+  .side .nm.bye{color:#999}
+  .sc{font-size:18px;font-weight:bold;min-width:30px;text-align:center}
+  .vs{text-align:center;font-size:12px;color:#888;margin-top:4px}
+  .nx{display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12px;color:#444;flex-wrap:wrap}
+  .nx select{font-size:14px;padding:6px;border:1px solid #bbb;border-radius:8px;min-width:0;max-width:100%}
+  .nxv{font-size:12px;color:#2f5d50;margin-top:6px}
+  .badge.st{font-size:11px}
 </style>
 </head>
 <body>
@@ -89,6 +116,12 @@
   </div>
   <div class="lock" id="lockBar" style="display:none">🔒 ロック中です（主催者のみ変更できます）</div>
 
+  <div class="tabs" id="tabs">
+    <button data-t="board" class="on">100マス</button>
+    <button data-t="tour">トーナメント</button>
+  </div>
+
+  <div id="tabBoard">
   <h2>盤面</h2>
   <div class="card">
     <div id="cur" style="font-size:14px"></div>
@@ -125,6 +158,22 @@
       <button id="shareBtn">LINEなどで共有</button>
     </div>
   </div>
+  </div>
+
+  <div id="tabTour" style="display:none">
+    <div id="tourAdmin" style="display:none">
+      <h2>対戦カードを追加</h2>
+      <div class="card">
+        <input type="text" id="mround" placeholder="区分（例：予選、準決勝、決勝）" list="roundList">
+        <datalist id="roundList"></datalist>
+        <div class="row"><button id="addM">対戦カードを追加</button></div>
+        <div style="font-size:12px;color:#666;margin-top:6px">チーム名や組み合わせは自由です。カードごとに「勝者が進む先」を決めておくと、勝者を選んだとき次のカードに自動で入ります。</div>
+      </div>
+    </div>
+    <h2>対戦表</h2>
+    <div id="mlist"></div>
+    <datalist id="teamList"></datalist>
+  </div>
 </div>
 
 <div id="modal"><div class="box"><p id="mmsg"></p><div class="row"><button class="sub" id="mno">やめる</button><button id="myes">実行する</button></div></div></div>
@@ -139,7 +188,7 @@
   // =========================================
 
   var PALETTE=["#e76f51","#2a9d8f","#e9c46a","#457b9d","#9b5de5","#f28482"];
-  var sb, me=null, gid=null, game=null, players=[], cells={}, filter="all", curP=null;
+  var sb, me=null, gid=null, game=null, players=[], cells={}, matches=[], filter="all", curP=null, tab="board", pendingTour=false;
   var ch=null, loadTimer=null, pollTimer=null;
 
   function $(id){return document.getElementById(id);}
@@ -244,6 +293,8 @@
     var a=await sb.from("games").select("*").eq("id",gid).maybeSingle();
     var b=await sb.from("players").select("*").eq("game_id",gid);
     var c=await sb.from("cells").select("*").eq("game_id",gid);
+    var mq=await sb.from("matches").select("*").eq("game_id",gid);
+    matches=(mq.error||!mq.data)?[]:mq.data.slice().sort(function(x,y){return x.sort_order-y.sort_order;});
     if(a.error||b.error||c.error){toast("同期に失敗しました");return !!game;}
     if(!a.data){toast("ルームが見つかりません");game=null;return false;}
     game=a.data;
@@ -266,6 +317,7 @@
       .on("postgres_changes",{event:"*",schema:"public",table:"games"},scheduleLoad)
       .on("postgres_changes",{event:"*",schema:"public",table:"players"},scheduleLoad)
       .on("postgres_changes",{event:"*",schema:"public",table:"cells"},scheduleLoad)
+      .on("postgres_changes",{event:"*",schema:"public",table:"matches"},scheduleLoad)
       .subscribe(function(status){$("sync").classList.toggle("on",status==="SUBSCRIBED");});
     pollTimer=setInterval(function(){if(gid&&!document.hidden)reload();},20000);
   }
@@ -319,6 +371,7 @@
     });
     if(!players.length)pl.innerHTML='<div style="color:#666;font-size:14px">まだ参加者がいません</div>';
     $("pcolor").value=$("pcolor").dataset.set||PALETTE[players.length%PALETTE.length];
+    renderTour();
   }
 
   // ---------- マス選択 ----------
@@ -415,6 +468,144 @@
       reload();
     });
   };
+
+
+  // ---------- トーナメント ----------
+  $("tabs").addEventListener("click",function(e){
+    var t=e.target.dataset&&e.target.dataset.t;if(!t)return;
+    tab=t;
+    var bs=$("tabs").children;for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].dataset.t===t);
+    $("tabBoard").style.display=t==="board"?"block":"none";
+    $("tabTour").style.display=t==="tour"?"block":"none";
+    renderTour();
+  });
+  function getM(id){for(var i=0;i<matches.length;i++)if(matches[i].id===id)return matches[i];return null;}
+  function mLabel(m,i){return "#"+(i+1)+" "+(m.round_label?m.round_label+" ":"")+(m.left_name||"？")+" vs "+(m.right_name||"？");}
+  var STATUS={pending:"未実施",live:"進行中",done:"終了"};
+  function renderTour(){
+    if(!game)return;
+    var ae=document.activeElement;
+    if(ae&&$("tabTour").contains(ae)&&(ae.tagName==="INPUT"||ae.tagName==="SELECT")){pendingTour=true;return;}
+    pendingTour=false;
+    var adm=isAdmin();
+    $("tourAdmin").style.display=adm?"block":"none";
+    var names={},rounds={};
+    matches.forEach(function(m){
+      if(m.left_name)names[m.left_name]=1;if(m.right_name)names[m.right_name]=1;
+      if(m.round_label)rounds[m.round_label]=1;
+    });
+    $("teamList").innerHTML=Object.keys(names).map(function(n){return '<option value="'+esc(n)+'">';}).join("");
+    $("roundList").innerHTML=Object.keys(rounds).map(function(n){return '<option value="'+esc(n)+'">';}).join("");
+    var box=$("mlist");box.innerHTML="";
+    if(!matches.length){box.innerHTML='<div class="card" style="color:#666;font-size:14px">'+(adm?"まだ対戦カードがありません。上で追加してください。":"まだ対戦表がありません")+'</div>';return;}
+    var lastR=null;
+    matches.forEach(function(m,i){
+      if(m.round_label!==lastR){lastR=m.round_label;var h=document.createElement("div");h.className="rl";h.textContent=m.round_label||"（区分なし）";box.appendChild(h);}
+      var d=document.createElement("div");d.className="m "+(m.status==="done"?"done":m.status==="live"?"live":"");d.dataset.id=m.id;
+      var nxM=m.next_match_id?getM(m.next_match_id):null;
+      var nxIdx=nxM?matches.indexOf(nxM):-1;
+      var html="";
+      if(adm){
+        html+='<div class="mh"><span class="no">#'+(i+1)+'</span>'
+          +'<input class="rlin" type="text" list="roundList" placeholder="区分" value="'+esc(m.round_label||"")+'" data-f="round_label">'
+          +'<select data-f="status">'+Object.keys(STATUS).map(function(k){return '<option value="'+k+'"'+(m.status===k?" selected":"")+'>'+STATUS[k]+'</option>';}).join("")+'</select>'
+          +'<button class="sub" data-act="up">↑</button><button class="sub" data-act="down">↓</button><button class="x sub" data-act="del" style="color:#b3402f">削除</button></div>';
+        ["left","right"].forEach(function(sd){
+          var bye=m[sd+"_bye"],win=m.winner===sd;
+          html+='<div class="side">'
+            +'<input type="text" list="teamList" placeholder="'+(sd==="left"?"左":"右")+'チーム名" value="'+esc(m[sd+"_name"]||"")+'" data-f="'+sd+'_name"'+(bye?" disabled":"")+'>'
+            +'<input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(m[sd+"_score"]==null?"":m[sd+"_score"])+'" data-f="'+sd+'_score"'+(bye?" disabled":"")+'>'
+            +'<button class="w'+(win?" win":"")+'" data-act="win" data-side="'+sd+'">'+(win?"🏆勝ち":"勝ち")+'</button>'
+            +'<label><input type="checkbox" data-f="'+sd+'_bye"'+(bye?" checked":"")+'>シード</label></div>';
+        });
+        html+='<div class="nx">勝者の行き先：<select data-f="next_match_id"><option value="">なし</option>'
+          +matches.filter(function(o){return o.id!==m.id;}).map(function(o){return '<option value="'+o.id+'"'+(m.next_match_id===o.id?" selected":"")+'>'+esc(mLabel(o,matches.indexOf(o)))+'</option>';}).join("")+'</select>'
+          +'<select data-f="next_slot"><option value="left"'+(m.next_slot==="left"?" selected":"")+'>左の枠</option><option value="right"'+(m.next_slot==="right"?" selected":"")+'>右の枠</option></select></div>';
+      }else{
+        html+='<div class="mh"><span class="no">#'+(i+1)+'</span><span class="badge st">'+STATUS[m.status||"pending"]+'</span></div>';
+        ["left","right"].forEach(function(sd){
+          var bye=m[sd+"_bye"],win=m.winner===sd;
+          html+='<div class="side"><span class="nm'+(win?" win":"")+(bye?" bye":"")+'">'+(win?"🏆 ":"")+esc(bye?"（シード）":(m[sd+"_name"]||"未定"))+'</span><span class="sc">'+(m[sd+"_score"]==null||bye?"":m[sd+"_score"])+'</span></div>';
+          if(sd==="left")html+='<div class="vs">vs</div>';
+        });
+        if(nxM)html+='<div class="nxv">勝者は「'+esc(mLabel(nxM,nxIdx))+'」の'+(m.next_slot==="right"?"右":"左")+'へ</div>';
+      }
+      d.innerHTML=html;box.appendChild(d);
+    });
+  }
+  $("tabTour").addEventListener("focusout",function(){
+    if(pendingTour)setTimeout(function(){if(pendingTour)renderTour();},350);
+  });
+  async function updM(id,patch){
+    var r=await sb.from("matches").update(patch).eq("id",id).select();
+    if(r.error){toast(errText(r.error));reload();return false;}
+    if(!r.data||!r.data.length){toast("変更できませんでした（主催者のみ編集できます）");reload();return false;}
+    return true;
+  }
+  async function propagate(m){
+    if(!m.next_match_id||!m.winner)return;
+    var nm=m.winner==="left"?m.left_name:m.right_name;
+    if(!nm)return;
+    var f=(m.next_slot==="right")?"right_name":"left_name";
+    var patch={};patch[f]=nm;
+    await updM(m.next_match_id,patch);
+  }
+  $("addM").onclick=async function(){
+    var max=0;matches.forEach(function(m){if(m.sort_order>max)max=m.sort_order;});
+    var r=await sb.from("matches").insert({game_id:gid,round_label:$("mround").value.trim(),sort_order:max+1}).select().single();
+    if(r.error){toast(errText(r.error));return;}
+    reload();
+  };
+  $("mlist").addEventListener("click",function(e){
+    var b=e.target.closest("button");if(!b||!b.dataset.act)return;
+    var card=b.closest(".m");var m=getM(card.dataset.id);if(!m)return;
+    var act=b.dataset.act,i=matches.indexOf(m);
+    if(act==="del"){
+      ask("この対戦カードを削除します。よろしいですか？",async function(){
+        var r=await sb.from("matches").delete().eq("id",m.id);
+        if(r.error)toast(errText(r.error));reload();
+      });
+    }else if(act==="up"||act==="down"){
+      var o=matches[i+(act==="up"?-1:1)];if(!o)return;
+      (async function(){
+        var a=await updM(m.id,{sort_order:o.sort_order});
+        var c=a&&await updM(o.id,{sort_order:m.sort_order});
+        reload();
+      })();
+    }else if(act==="win"){
+      var sd=b.dataset.side,nw=(m.winner===sd)?null:sd;
+      (async function(){
+        var patch={winner:nw};if(nw&&m.status!=="done")patch.status="done";
+        if(await updM(m.id,patch)){
+          if(nw){var mm=Object.assign({},m,patch);await propagate(mm);}
+          reload();
+        }
+      })();
+    }
+  });
+  $("mlist").addEventListener("change",async function(e){
+    var t=e.target,f=t.dataset&&t.dataset.f;if(!f)return;
+    var card=t.closest(".m");var m=getM(card.dataset.id);if(!m)return;
+    var patch={},v;
+    if(f.slice(-5)==="score"){v=t.value===""?null:parseInt(t.value,10);if(v!==null&&!(v>=0)){toast("的中数は0以上の数字です");reload();return;}patch[f]=v;}
+    else if(f.slice(-3)==="bye"){
+      patch[f]=t.checked;
+      if(t.checked){
+        var sd=f.indexOf("left")===0?"left":"right",opp=sd==="left"?"right":"left";
+        patch[sd+"_name"]="";patch[sd+"_score"]=null;
+        if(m.winner===sd)patch.winner=null;
+        if(m[opp+"_name"]&&!m[opp+"_bye"]){patch.winner=opp;patch.status="done";}
+      }
+    }
+    else if(f==="next_match_id"){patch[f]=t.value||null;}
+    else patch[f]=t.value.trim();
+    if(f==="next_slot"&&!t.value)return;
+    if(await updM(m.id,patch)){
+      var mm=Object.assign({},m,patch);
+      if(f.slice(-3)==="bye"&&patch.winner)await propagate(mm);
+      reload();
+    }
+  });
 
   // ---------- 共有 ----------
   $("copyUrl").onclick=async function(){
