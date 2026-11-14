@@ -77,6 +77,15 @@
   .nx select{font-size:14px;padding:6px;border:1px solid #bbb;border-radius:8px;min-width:0;max-width:100%}
   .nxv{font-size:12px;color:#2f5d50;margin-top:6px}
   .badge.st{font-size:11px}
+  .c.hit{outline:3px solid #e9a23b;outline-offset:-3px;box-shadow:0 0 0 2px #fff inset}
+  .rc{background:#fff;border-radius:12px;padding:10px;margin-top:8px;box-shadow:0 1px 3px rgba(0,0,0,.12);border-left:6px solid #d6d0c2}
+  .rc.done{border-left-color:#2f5d50}
+  .rc .ax{font-size:12px;color:#2f5d50;font-weight:bold;margin-top:8px}
+  .rres{margin-top:10px;padding:10px;border-radius:10px;background:#faf8f3;font-size:15px;line-height:1.6}
+  .rres b{font-size:18px}
+  .rres.win{background:#fff3cd}
+  .pot{font-size:14px;line-height:1.7}
+  .stats .stat b{font-size:20px}
 </style>
 </head>
 <body>
@@ -89,6 +98,11 @@
   <h2>ルームを作る（あなたが主催者）</h2>
   <div class="card">
     <input type="text" id="gname" placeholder="ルーム名（例：秋季大会）">
+    <div id="carryBox" style="display:none;margin-top:8px">
+      <label style="font-size:13px">繰越チップを引き継ぐ（任意）
+        <select id="carrySel" style="width:100%;font-size:16px;padding:10px;border:1px solid #bbb;border-radius:8px"></select>
+      </label>
+    </div>
     <div class="row"><button id="createG">ルームを作成</button></div>
   </div>
   <h2>参加中のルーム</h2>
@@ -110,15 +124,17 @@
   <h1 id="gtitle" style="margin-top:8px"></h1>
 
   <div class="stats">
+    <div class="stat"><b id="sChips">0</b><span>今回のチップ</span></div>
+    <div class="stat"><b id="sCarry">0</b><span>繰越チップ</span></div>
     <div class="stat"><b id="sPlayers">0</b><span>参加者数</span></div>
     <div class="stat"><b id="sTaken">0</b><span>選択済み</span></div>
-    <div class="stat"><b id="sFree">100</b><span>空きマス</span></div>
   </div>
   <div class="lock" id="lockBar" style="display:none">🔒 ロック中です（主催者のみ変更できます）</div>
 
   <div class="tabs" id="tabs">
     <button data-t="board" class="on">100マス</button>
     <button data-t="tour">トーナメント</button>
+    <button data-t="res">結果</button>
   </div>
 
   <div id="tabBoard">
@@ -174,6 +190,30 @@
     <div id="mlist"></div>
     <datalist id="teamList"></datalist>
   </div>
+
+  <div id="tabRes" style="display:none">
+    <h2>仮想チップ（換金できません）</h2>
+    <div class="card">
+      <div class="pot" id="potInfo"></div>
+      <div id="chipAdmin" style="display:none">
+        <div class="row" style="align-items:center">
+          <label style="flex:1;font-size:13px">今回のチップ<input type="number" id="gchips" min="0" inputmode="numeric"></label>
+          <label style="flex:1;font-size:13px">繰越チップ（修正）<input type="number" id="gcarry" min="0" inputmode="numeric"></label>
+        </div>
+      </div>
+    </div>
+    <div id="resAdmin" style="display:none">
+      <h2>結果を追加</h2>
+      <div class="card">
+        <input type="text" id="rlabel" placeholder="名前（例：予選、決勝）" list="resLabels">
+        <datalist id="resLabels"><option value="予選"><option value="決勝"></datalist>
+        <div class="row"><button id="addR">結果を追加</button></div>
+        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの的中数を入れると、下一桁から当たりのマスが決まります。1件あたりのチップは、合計を結果の件数で等分します。</div>
+      </div>
+    </div>
+    <h2>結果</h2>
+    <div id="rlist"></div>
+  </div>
 </div>
 
 <div id="modal"><div class="box"><p id="mmsg"></p><div class="row"><button class="sub" id="mno">やめる</button><button id="myes">実行する</button></div></div></div>
@@ -188,7 +228,7 @@
   // =========================================
 
   var PALETTE=["#e76f51","#2a9d8f","#e9c46a","#457b9d","#9b5de5","#f28482"];
-  var sb, me=null, gid=null, game=null, players=[], cells={}, matches=[], filter="all", curP=null, tab="board", pendingTour=false;
+  var sb, me=null, gid=null, game=null, players=[], cells={}, matches=[], resList=[], pendingRes=false, filter="all", curP=null, tab="board", pendingTour=false;
   var ch=null, loadTimer=null, pollTimer=null;
 
   function $(id){return document.getElementById(id);}
@@ -246,8 +286,18 @@
     unsubscribe();gid=null;game=null;
     try{history.replaceState(null,"",location.pathname);}catch(e){}
     showView("home");
-    var r=await sb.from("games").select("id,name,created_at").order("created_at",{ascending:false});
+    var r=await sb.from("games").select("id,name,created_at,admin_id,carry_out,carry_from").order("created_at",{ascending:false});
     var box=$("glist");
+    try{
+      var sel=$("carrySel"),cb=$("carryBox");
+      sel.innerHTML='<option value="">引き継がない</option>';
+      if(!r.error){
+        var used={};r.data.forEach(function(g){if(g.carry_from)used[g.carry_from]=1;});
+        var opts=r.data.filter(function(g){return g.admin_id===me.id&&g.carry_out>0&&!used[g.id];});
+        opts.forEach(function(g){var o=document.createElement("option");o.value=g.id;o.textContent=g.name+"（繰越 "+g.carry_out+" チップ）";sel.appendChild(o);});
+        cb.style.display=opts.length?"block":"none";
+      }
+    }catch(e){}
     if(r.error){box.textContent="一覧を読み込めませんでした";return;}
     if(!r.data.length){box.innerHTML='<div style="color:#666;font-size:14px">まだルームがありません</div>';return;}
     box.innerHTML="";
@@ -262,7 +312,13 @@
   });
   $("createG").onclick=async function(){
     var name=$("gname").value.trim()||"新しいルーム";
-    var r=await sb.from("games").insert({name:name,axis_x:shuffled(),axis_y:shuffled()}).select().single();
+    var rec={name:name,axis_x:shuffled(),axis_y:shuffled()};
+    var cs=$("carrySel").value;
+    if(cs){
+      var src=await sb.from("games").select("id,carry_out").eq("id",cs).maybeSingle();
+      if(src.data&&src.data.carry_out>0){rec.carry_in=src.data.carry_out;rec.carry_from=src.data.id;}
+    }
+    var r=await sb.from("games").insert(rec).select().single();
     if(r.error){toast(errText(r.error));return;}
     $("gname").value="";
     await openGame(r.data.id);
@@ -295,6 +351,8 @@
     var c=await sb.from("cells").select("*").eq("game_id",gid);
     var mq=await sb.from("matches").select("*").eq("game_id",gid);
     matches=(mq.error||!mq.data)?[]:mq.data.slice().sort(function(x,y){return x.sort_order-y.sort_order;});
+    var rq=await sb.from("results").select("*").eq("game_id",gid);
+    resList=(rq.error||!rq.data)?[]:rq.data.slice().sort(function(x,y){return x.sort_order-y.sort_order;});
     if(a.error||b.error||c.error){toast("同期に失敗しました");return !!game;}
     if(!a.data){toast("ルームが見つかりません");game=null;return false;}
     game=a.data;
@@ -306,6 +364,7 @@
       curP=mine?mine.id:null;
     }
     renderGame();
+    syncCarry();
     return true;
   }
 
@@ -318,6 +377,7 @@
       .on("postgres_changes",{event:"*",schema:"public",table:"players"},scheduleLoad)
       .on("postgres_changes",{event:"*",schema:"public",table:"cells"},scheduleLoad)
       .on("postgres_changes",{event:"*",schema:"public",table:"matches"},scheduleLoad)
+      .on("postgres_changes",{event:"*",schema:"public",table:"results"},scheduleLoad)
       .subscribe(function(status){$("sync").classList.toggle("on",status==="SUBSCRIBED");});
     pollTimer=setInterval(function(){if(gid&&!document.hidden)reload();},20000);
   }
@@ -336,7 +396,8 @@
     $("role").className="badge"+(isAdmin()?" admin":"");
     $("sPlayers").textContent=players.length;
     $("sTaken").textContent=total;
-    $("sFree").textContent=100-total;
+    $("sChips").textContent=game.chips||0;
+    $("sCarry").textContent=game.carry_in||0;
     $("lockBar").style.display=game.locked?"block":"none";
     $("adminRow").style.display=isAdmin()?"flex":"none";
     $("lockBtn").textContent=game.locked?"ロック解除":"ロックする";
@@ -345,6 +406,8 @@
     var cp=getP(curP);
     $("cur").innerHTML=cp?'選ぶ人：<b style="color:'+esc(cp.color)+'">● '+esc(cp.name)+'</b>（残り '+(cp.cell_limit-countOf(cp.id))+'マス）':"選ぶ人：未選択（下で参加者として追加してください）";
 
+    var hitKeys={};
+    resList.forEach(function(rr){var h=hit(rr);if(h)hitKeys[h.row+"-"+h.col]=1;});
     var b=$("board");b.innerHTML="";
     var corner=document.createElement("div");corner.className="h";b.appendChild(corner);
     for(var c=0;c<10;c++){var h=document.createElement("div");h.className="h";h.textContent=game.axis_x[c];b.appendChild(h);}
@@ -356,6 +419,7 @@
         if(owner){btn.style.background=owner.color;btn.textContent=owner.name.slice(0,2);}
         var taken=!!cells[key];
         if((filter==="free"&&taken)||(filter==="taken"&&!taken))btn.classList.add("dim");
+        if(hitKeys[key])btn.classList.add("hit");
         b.appendChild(btn);
       }
     }
@@ -372,6 +436,7 @@
     if(!players.length)pl.innerHTML='<div style="color:#666;font-size:14px">まだ参加者がいません</div>';
     $("pcolor").value=$("pcolor").dataset.set||PALETTE[players.length%PALETTE.length];
     renderTour();
+    renderRes();
   }
 
   // ---------- マス選択 ----------
@@ -447,6 +512,7 @@
 
   // ---------- 主催者操作 ----------
   function doShuffle(which,label){
+    if(resList.some(function(r){return r.confirmed;})){toast("結果が確定済みのためシャッフルできません。先に結果の確定を取り消してください");return;}
     var extra=Object.keys(cells).length?"（すでに選ばれたマスがあります）":"";
     ask(label+"をシャッフルします"+extra+"。数字の配置が変わりますがよろしいですか？",async function(){
       var upd={};
@@ -477,7 +543,8 @@
     var bs=$("tabs").children;for(var i=0;i<bs.length;i++)bs[i].classList.toggle("on",bs[i].dataset.t===t);
     $("tabBoard").style.display=t==="board"?"block":"none";
     $("tabTour").style.display=t==="tour"?"block":"none";
-    renderTour();
+    $("tabRes").style.display=t==="res"?"block":"none";
+    renderTour();renderRes();
   });
   function getM(id){for(var i=0;i<matches.length;i++)if(matches[i].id===id)return matches[i];return null;}
   function mLabel(m,i){return "#"+(i+1)+" "+(m.round_label?m.round_label+" ":"")+(m.left_name||"？")+" vs "+(m.right_name||"？");}
@@ -605,6 +672,154 @@
       if(f.slice(-3)==="bye"&&patch.winner)await propagate(mm);
       reload();
     }
+  });
+
+
+  // ---------- 結果・仮想チップ ----------
+  function hit(r){
+    if(!game||r.h_score==null||r.v_score==null)return null;
+    var col=game.axis_x.indexOf(r.h_score%10),row=game.axis_y.indexOf(r.v_score%10);
+    if(col<0||row<0)return null;
+    return {row:row,col:col,no:row*10+col+1,dx:r.h_score%10,dy:r.v_score%10,player:getP(cells[row+"-"+col])};
+  }
+  function potInfo(){
+    var pot=(game.chips||0)+(game.carry_in||0),n=resList.length,share=n?Math.floor(pot/n):0;
+    return {pot:pot,n:n,share:share,rem:n?pot-share*n:0};
+  }
+  function carryOutNow(){
+    var p=potInfo();
+    if(!p.n||!resList.every(function(r){return r.confirmed;}))return 0;
+    var c=p.rem;
+    resList.forEach(function(r){var h=hit(r);if(!h||!h.player)c+=p.share;});
+    return c;
+  }
+  async function syncCarry(){
+    if(!game||!isAdmin())return;
+    var c=carryOutNow();
+    if((game.carry_out||0)!==c){await sb.from("games").update({carry_out:c}).eq("id",gid);}
+  }
+  function renderRes(){
+    if(!game)return;
+    var ae=document.activeElement;
+    if(ae&&$("tabRes").contains(ae)&&(ae.tagName==="INPUT"||ae.tagName==="SELECT")){pendingRes=true;return;}
+    pendingRes=false;
+    var adm=isAdmin(),p=potInfo(),allDone=p.n>0&&resList.every(function(r){return r.confirmed;});
+    $("potInfo").innerHTML="合計 <b>"+p.pot+"</b> チップ（今回 "+(game.chips||0)+" ＋ 繰越 "+(game.carry_in||0)+"）"
+      +(p.n?"<br>結果 "+p.n+"件 → 1件あたり <b>"+p.share+"</b> チップ"+(p.rem?"（端数 "+p.rem+" は繰越）":""):"<br>結果を追加するとチップが配分されます")
+      +(allDone?"<br>次のルームへの繰越：<b>"+(game.carry_out||0)+"</b> チップ":"");
+    $("chipAdmin").style.display=adm?"block":"none";
+    $("resAdmin").style.display=adm?"block":"none";
+    if(adm){$("gchips").value=game.chips||0;$("gcarry").value=game.carry_in||0;}
+    var box=$("rlist");box.innerHTML="";
+    if(!resList.length){box.innerHTML='<div class="card" style="color:#666;font-size:14px">'+(adm?"まだ結果がありません。上で追加してください。":"まだ結果がありません")+'</div>';return;}
+    resList.forEach(function(r){
+      var d=document.createElement("div");d.className="rc"+(r.confirmed?" done":"");d.dataset.id=r.id;
+      var h=hit(r),dis=r.confirmed?" disabled":"",html="";
+      if(adm){
+        html+='<div class="mh"><input class="rlin" type="text" list="resLabels" placeholder="名前" value="'+esc(r.label||"")+'" data-f="label"'+dis+'>'
+          +'<button class="sub" data-act="up">↑</button><button class="sub" data-act="down">↓</button><button class="x sub" data-act="del" style="color:#b3402f">削除</button></div>';
+        html+='<div class="nx" style="margin-top:0">対戦から入力：<select data-f="from"'+dis+'><option value="">手入力</option>'
+          +matches.map(function(m,i){return '<option value="'+m.id+'">'+esc(mLabel(m,i))+'</option>';}).join("")+'</select></div>';
+        html+='<div class="ax">横軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.h_team||"")+'" data-f="h_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(r.h_score==null?"":r.h_score)+'" data-f="h_score"'+dis+'></div>';
+        html+='<div class="ax">縦軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.v_team||"")+'" data-f="v_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(r.v_score==null?"":r.v_score)+'" data-f="v_score"'+dis+'></div>';
+        html+='<div class="row"><button class="sub" data-act="swap"'+dis+'>横と縦を入れ替え</button></div>';
+      }else{
+        html+='<div class="mh"><span class="no">'+esc(r.label||"結果")+'</span></div>'
+          +'<div style="font-size:15px">横軸：'+esc(r.h_team||"未定")+' <b>'+(r.h_score==null?"－":r.h_score)+'</b><br>縦軸：'+esc(r.v_team||"未定")+' <b>'+(r.v_score==null?"－":r.v_score)+'</b></div>';
+      }
+      var t="";
+      if(!h){t="的中数を入力すると、当たりのマスが表示されます";}
+      else{
+        t="横軸 <b>"+h.dx+"</b> ・ 縦軸 <b>"+h.dy+"</b> → <b>"+h.no+"マス目</b>（左から"+(h.col+1)+"・上から"+(h.row+1)+"）<br>";
+        if(h.player)t+="🎯 該当者：<b style=\"color:"+esc(h.player.color)+"\">● "+esc(h.player.name)+"</b>　"+p.share+" チップ獲得";
+        else t+="該当者なし → "+p.share+" チップを次回に繰越";
+        if(!r.confirmed)t+="<br><small>（確定前の仮の結果です）</small>";
+      }
+      html+='<div class="rres'+(h&&h.player?" win":"")+'">'+t+'</div>';
+      if(adm){
+        html+='<div class="row">'+(r.confirmed?'<button class="sub" data-act="unconfirm">確定を取り消す</button>':'<button data-act="confirm">結果を確定する</button>')+'</div>';
+      }else if(r.confirmed){html+='<div class="nxv">✔ 結果確定済み</div>';}
+      d.innerHTML=html;box.appendChild(d);
+    });
+  }
+  $("tabRes").addEventListener("focusout",function(){
+    if(pendingRes)setTimeout(function(){if(pendingRes)renderRes();},350);
+  });
+  function getR(id){for(var i=0;i<resList.length;i++)if(resList[i].id===id)return resList[i];return null;}
+  async function updR(id,patch){
+    var r=await sb.from("results").update(patch).eq("id",id).select();
+    if(r.error){toast(errText(r.error));reload();return false;}
+    if(!r.data||!r.data.length){toast("変更できませんでした（主催者のみ編集できます）");reload();return false;}
+    return true;
+  }
+  $("addR").onclick=async function(){
+    var max=0;resList.forEach(function(x){if(x.sort_order>max)max=x.sort_order;});
+    var r=await sb.from("results").insert({game_id:gid,label:$("rlabel").value.trim(),sort_order:max+1}).select().single();
+    if(r.error){toast(errText(r.error));return;}
+    $("rlabel").value="";reload();
+  };
+  async function updGame(patch){
+    var r=await sb.from("games").update(patch).eq("id",gid).select();
+    if(r.error){toast(errText(r.error));reload();return false;}
+    if(!r.data||!r.data.length){toast("変更できませんでした");reload();return false;}
+    return true;
+  }
+  $("gchips").addEventListener("change",async function(){
+    var v=parseInt($("gchips").value,10);
+    if(!(v>=0)){toast("0以上の数字を入力してください");reload();return;}
+    if(resList.some(function(x){return x.confirmed;})){toast("確定済みの結果があります。先に確定を取り消してください");reload();return;}
+    if(await updGame({chips:v}))reload();
+  });
+  $("gcarry").addEventListener("change",async function(){
+    var v=parseInt($("gcarry").value,10);
+    if(!(v>=0)){toast("0以上の数字を入力してください");reload();return;}
+    if(resList.some(function(x){return x.confirmed;})){toast("確定済みの結果があります。先に確定を取り消してください");reload();return;}
+    if(await updGame({carry_in:v}))reload();
+  });
+  $("rlist").addEventListener("click",function(e){
+    var b=e.target.closest("button");if(!b||!b.dataset.act)return;
+    var r=getR(b.closest(".rc").dataset.id);if(!r)return;
+    var act=b.dataset.act,i=resList.indexOf(r);
+    if(act==="del"){
+      ask("この結果を削除します。よろしいですか？",async function(){
+        var d=await sb.from("results").delete().eq("id",r.id);
+        if(d.error)toast(errText(d.error));reload();
+      });
+    }else if(act==="up"||act==="down"){
+      var o=resList[i+(act==="up"?-1:1)];if(!o)return;
+      (async function(){
+        var a=await updR(r.id,{sort_order:o.sort_order});
+        if(a)await updR(o.id,{sort_order:r.sort_order});
+        reload();
+      })();
+    }else if(act==="swap"){
+      (async function(){
+        if(await updR(r.id,{h_team:r.v_team,v_team:r.h_team,h_score:r.v_score,v_score:r.h_score}))reload();
+      })();
+    }else if(act==="confirm"){
+      if(r.h_score==null||r.v_score==null){toast("横軸・縦軸の的中数を入力してください");return;}
+      ask("この結果を確定します。確定すると盤面がロックされます。よろしいですか？",async function(){
+        if(await updR(r.id,{confirmed:true})){await sb.from("games").update({locked:true}).eq("id",gid);reload();}
+      });
+    }else if(act==="unconfirm"){
+      ask("結果の確定を取り消します（盤面のロックは自動では解除されません）。",async function(){
+        if(await updR(r.id,{confirmed:false}))reload();
+      });
+    }
+  });
+  $("rlist").addEventListener("change",async function(e){
+    var t=e.target,f=t.dataset&&t.dataset.f;if(!f)return;
+    var r=getR(t.closest(".rc").dataset.id);if(!r)return;
+    var patch={};
+    if(f==="from"){
+      var m=getM(t.value);if(!m)return;
+      patch={h_team:m.left_name||"",v_team:m.right_name||"",h_score:m.left_score,v_score:m.right_score};
+    }else if(f==="h_score"||f==="v_score"){
+      var v=t.value===""?null:parseInt(t.value,10);
+      if(v!==null&&!(v>=0)){toast("的中数は0以上の数字です");reload();return;}
+      patch[f]=v;
+    }else patch[f]=t.value.trim();
+    if(await updR(r.id,patch))reload();
   });
 
   // ---------- 共有 ----------
