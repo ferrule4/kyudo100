@@ -130,6 +130,7 @@
     <div class="stat"><b id="sTaken">0</b><span>選択済み</span></div>
   </div>
   <div class="lock" id="lockBar" style="display:none">🔒 ロック中です（主催者のみ変更できます）</div>
+  <div class="lock" id="axisBar" style="display:none;background:#e8f1ff"></div>
 
   <div class="tabs" id="tabs">
     <button data-t="board" class="on">100マス</button>
@@ -152,6 +153,7 @@
       <button class="sub" id="shY">縦軸シャッフル</button>
       <button class="sub" id="shB">両軸シャッフル</button>
       <button class="sub" id="lockBtn">ロックする</button>
+      <button class="danger" id="resetBoard" style="min-width:100%">マス選択をリセット（次の試合へ）</button>
     </div>
   </div>
 
@@ -208,7 +210,7 @@
         <input type="text" id="rlabel" placeholder="名前（例：予選、決勝）" list="resLabels">
         <datalist id="resLabels"><option value="予選"><option value="決勝"></datalist>
         <div class="row"><button id="addR">結果を追加</button></div>
-        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの的中数を入れると、下一桁から当たりのマスが決まります。1件あたりのチップは、合計を結果の件数で等分します。</div>
+        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの得点を入れると、下一桁から当たりのマスが決まります。1件あたりのチップは、合計を結果の件数で等分します。</div>
       </div>
     </div>
     <h2>結果</h2>
@@ -312,7 +314,7 @@
   });
   $("createG").onclick=async function(){
     var name=$("gname").value.trim()||"新しいルーム";
-    var rec={name:name,axis_x:shuffled(),axis_y:shuffled()};
+    var rec={name:name};
     var cs=$("carrySel").value;
     if(cs){
       var src=await sb.from("games").select("id,carry_out").eq("id",cs).maybeSingle();
@@ -399,6 +401,9 @@
     $("sChips").textContent=game.chips||0;
     $("sCarry").textContent=game.carry_in||0;
     $("lockBar").style.display=game.locked?"block":"none";
+    var ready=axesReady();
+    $("axisBar").style.display=ready?"none":"block";
+    if(!ready)$("axisBar").innerHTML="🎲 数字は、主催者が横軸・縦軸の<b>両方</b>をシャッフルするまで「-」で表示されます。<br>横軸："+(game.axis_x?"済":"未")+"　縦軸："+(game.axis_y?"済":"未");
     $("adminRow").style.display=isAdmin()?"flex":"none";
     $("lockBtn").textContent=game.locked?"ロック解除":"ロックする";
     $("shareUrl").value=shareUrl();
@@ -407,12 +412,15 @@
     $("cur").innerHTML=cp?'選ぶ人：<b style="color:'+esc(cp.color)+'">● '+esc(cp.name)+'</b>（残り '+(cp.cell_limit-countOf(cp.id))+'マス）':"選ぶ人：未選択（下で参加者として追加してください）";
 
     var hitKeys={};
-    resList.forEach(function(rr){var h=hit(rr);if(h)hitKeys[h.row+"-"+h.col]=1;});
+    resList.forEach(function(rr){
+      var h=hit(rr);
+      if(h&&(!h.snap||(ready&&game.axis_x[h.col]===h.dx&&game.axis_y[h.row]===h.dy)))hitKeys[h.row+"-"+h.col]=1;
+    });
     var b=$("board");b.innerHTML="";
     var corner=document.createElement("div");corner.className="h";b.appendChild(corner);
-    for(var c=0;c<10;c++){var h=document.createElement("div");h.className="h";h.textContent=game.axis_x[c];b.appendChild(h);}
+    for(var c=0;c<10;c++){var h=document.createElement("div");h.className="h";h.textContent=ready?game.axis_x[c]:"-";b.appendChild(h);}
     for(var r=0;r<10;r++){
-      var hy=document.createElement("div");hy.className="h";hy.textContent=game.axis_y[r];b.appendChild(hy);
+      var hy=document.createElement("div");hy.className="h";hy.textContent=ready?game.axis_y[r]:"-";b.appendChild(hy);
       for(var c2=0;c2<10;c2++){
         var key=r+"-"+c2,owner=getP(cells[key]);
         var btn=document.createElement("button");btn.className="c";btn.dataset.k=key;
@@ -512,13 +520,9 @@
 
   // ---------- 主催者操作 ----------
   function doShuffle(which,label){
-    if(resList.some(function(r){return r.confirmed;})){toast("結果が確定済みのためシャッフルできません。先に結果の確定を取り消してください");return;}
     var extra=Object.keys(cells).length?"（すでに選ばれたマスがあります）":"";
-    ask(label+"をシャッフルします"+extra+"。数字の配置が変わりますがよろしいですか？",async function(){
-      var upd={};
-      if(which!=="y")upd.axis_x=shuffled();
-      if(which!=="x")upd.axis_y=shuffled();
-      var r=await sb.from("games").update(upd).eq("id",gid);
+    ask(label+"をシャッフルします"+extra+"。数字はサーバーがランダムに決めます。よろしいですか？",async function(){
+      var r=await sb.rpc("shuffle_axis",{g:gid,which:which==="b"?"both":which});
       if(r.error){toast(errText(r.error));return;}
       toast("シャッフルしました");reload();
     });
@@ -526,6 +530,13 @@
   $("shX").onclick=function(){doShuffle("x","横軸");};
   $("shY").onclick=function(){doShuffle("y","縦軸");};
   $("shB").onclick=function(){doShuffle("b","両軸");};
+  $("resetBoard").onclick=function(){
+    ask("全員のマス選択を消して、盤面の数字を「-」に戻します（参加者・対戦表・確定済みの結果の記録は残ります）。次の試合の前にお使いください。よろしいですか？",async function(){
+      var r=await sb.rpc("reset_board",{g:gid});
+      if(r.error){toast(errText(r.error));return;}
+      toast("リセットしました。横軸・縦軸をシャッフルしてください");reload();
+    });
+  };
   $("lockBtn").onclick=function(){
     var to=!game.locked;
     ask(to?"盤面をロックします。参加者はマスを変更できなくなります。":"ロックを解除します。",async function(){
@@ -581,7 +592,7 @@
           var bye=m[sd+"_bye"],win=m.winner===sd;
           html+='<div class="side">'
             +'<input type="text" list="teamList" placeholder="'+(sd==="left"?"左":"右")+'チーム名" value="'+esc(m[sd+"_name"]||"")+'" data-f="'+sd+'_name"'+(bye?" disabled":"")+'>'
-            +'<input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(m[sd+"_score"]==null?"":m[sd+"_score"])+'" data-f="'+sd+'_score"'+(bye?" disabled":"")+'>'
+            +'<input type="number" inputmode="numeric" min="0" placeholder="得点" value="'+(m[sd+"_score"]==null?"":m[sd+"_score"])+'" data-f="'+sd+'_score"'+(bye?" disabled":"")+'>'
             +'<button class="w'+(win?" win":"")+'" data-act="win" data-side="'+sd+'">'+(win?"🏆勝ち":"勝ち")+'</button>'
             +'<label><input type="checkbox" data-f="'+sd+'_bye"'+(bye?" checked":"")+'>シード</label></div>';
         });
@@ -654,7 +665,7 @@
     var t=e.target,f=t.dataset&&t.dataset.f;if(!f)return;
     var card=t.closest(".m");var m=getM(card.dataset.id);if(!m)return;
     var patch={},v;
-    if(f.slice(-5)==="score"){v=t.value===""?null:parseInt(t.value,10);if(v!==null&&!(v>=0)){toast("的中数は0以上の数字です");reload();return;}patch[f]=v;}
+    if(f.slice(-5)==="score"){v=t.value===""?null:parseInt(t.value,10);if(v!==null&&!(v>=0)){toast("得点は0以上の数字です");reload();return;}patch[f]=v;}
     else if(f.slice(-3)==="bye"){
       patch[f]=t.checked;
       if(t.checked){
@@ -676,8 +687,11 @@
 
 
   // ---------- 結果・仮想チップ ----------
+  function axesReady(){return !!(game&&game.axis_x&&game.axis_y);}
   function hit(r){
-    if(!game||r.h_score==null||r.v_score==null)return null;
+    if(!game)return null;
+    if(r.confirmed&&r.hit_no!=null)return {row:r.hit_row,col:r.hit_col,no:r.hit_no,dx:r.hit_dx,dy:r.hit_dy,snap:true,player:r.hit_player?{name:r.hit_player,color:r.hit_color||"#888"}:null};
+    if(!axesReady()||r.h_score==null||r.v_score==null)return null;
     var col=game.axis_x.indexOf(r.h_score%10),row=game.axis_y.indexOf(r.v_score%10);
     if(col<0||row<0)return null;
     return {row:row,col:col,no:row*10+col+1,dx:r.h_score%10,dy:r.v_score%10,player:getP(cells[row+"-"+col])};
@@ -690,7 +704,7 @@
     var p=potInfo();
     if(!p.n||!resList.every(function(r){return r.confirmed;}))return 0;
     var c=p.rem;
-    resList.forEach(function(r){var h=hit(r);if(!h||!h.player)c+=p.share;});
+    resList.forEach(function(r){var h=hit(r);var sh=(r.share_snap!=null)?r.share_snap:p.share;if(!h||!h.player)c+=sh;});
     return c;
   }
   async function syncCarry(){
@@ -720,20 +734,20 @@
           +'<button class="sub" data-act="up">↑</button><button class="sub" data-act="down">↓</button><button class="x sub" data-act="del" style="color:#b3402f">削除</button></div>';
         html+='<div class="nx" style="margin-top:0">対戦から入力：<select data-f="from"'+dis+'><option value="">手入力</option>'
           +matches.map(function(m,i){return '<option value="'+m.id+'">'+esc(mLabel(m,i))+'</option>';}).join("")+'</select></div>';
-        html+='<div class="ax">横軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.h_team||"")+'" data-f="h_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(r.h_score==null?"":r.h_score)+'" data-f="h_score"'+dis+'></div>';
-        html+='<div class="ax">縦軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.v_team||"")+'" data-f="v_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="的中" value="'+(r.v_score==null?"":r.v_score)+'" data-f="v_score"'+dis+'></div>';
+        html+='<div class="ax">横軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.h_team||"")+'" data-f="h_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="得点" value="'+(r.h_score==null?"":r.h_score)+'" data-f="h_score"'+dis+'></div>';
+        html+='<div class="ax">縦軸チーム</div><div class="side"><input type="text" list="teamList" placeholder="チーム名" value="'+esc(r.v_team||"")+'" data-f="v_team"'+dis+'><input type="number" inputmode="numeric" min="0" placeholder="得点" value="'+(r.v_score==null?"":r.v_score)+'" data-f="v_score"'+dis+'></div>';
         html+='<div class="row"><button class="sub" data-act="swap"'+dis+'>横と縦を入れ替え</button></div>';
       }else{
         html+='<div class="mh"><span class="no">'+esc(r.label||"結果")+'</span></div>'
           +'<div style="font-size:15px">横軸：'+esc(r.h_team||"未定")+' <b>'+(r.h_score==null?"－":r.h_score)+'</b><br>縦軸：'+esc(r.v_team||"未定")+' <b>'+(r.v_score==null?"－":r.v_score)+'</b></div>';
       }
-      var t="";
-      if(!h){t="的中数を入力すると、当たりのマスが表示されます";}
+      var t="",sh=(r.confirmed&&r.share_snap!=null)?r.share_snap:p.share;
+      if(!h){t=axesReady()?"得点を入力すると、当たりのマスが表示されます":"盤面の数字がまだ決まっていません（横軸・縦軸のシャッフル後に表示されます）";}
       else{
         t="横軸 <b>"+h.dx+"</b> ・ 縦軸 <b>"+h.dy+"</b> → <b>"+h.no+"マス目</b>（左から"+(h.col+1)+"・上から"+(h.row+1)+"）<br>";
-        if(h.player)t+="🎯 該当者：<b style=\"color:"+esc(h.player.color)+"\">● "+esc(h.player.name)+"</b>　"+p.share+" チップ獲得";
-        else t+="該当者なし → "+p.share+" チップを次回に繰越";
-        if(!r.confirmed)t+="<br><small>（確定前の仮の結果です）</small>";
+        if(h.player)t+="🎯 該当者：<b style=\"color:"+esc(h.player.color)+"\">● "+esc(h.player.name)+"</b>　"+sh+" チップ獲得";
+        else t+="該当者なし → "+sh+" チップを次回に繰越";
+        if(!r.confirmed)t+="<br><small>（確定前の仮の結果です）</small>";else t+="<br><small>（確定時の記録です）</small>";
       }
       html+='<div class="rres'+(h&&h.player?" win":"")+'">'+t+'</div>';
       if(adm){
@@ -797,13 +811,16 @@
         if(await updR(r.id,{h_team:r.v_team,v_team:r.h_team,h_score:r.v_score,v_score:r.h_score}))reload();
       })();
     }else if(act==="confirm"){
-      if(r.h_score==null||r.v_score==null){toast("横軸・縦軸の的中数を入力してください");return;}
+      if(r.h_score==null||r.v_score==null){toast("横軸・縦軸の得点を入力してください");return;}
+      var hh=hit(r);
+      if(!hh){toast("盤面の数字がまだ決まっていません。横軸・縦軸をシャッフルしてください");return;}
+      var snap={confirmed:true,share_snap:potInfo().share,hit_row:hh.row,hit_col:hh.col,hit_no:hh.no,hit_dx:hh.dx,hit_dy:hh.dy,hit_player:hh.player?hh.player.name:null,hit_color:hh.player?hh.player.color:null};
       ask("この結果を確定します。確定すると盤面がロックされます。よろしいですか？",async function(){
-        if(await updR(r.id,{confirmed:true})){await sb.from("games").update({locked:true}).eq("id",gid);reload();}
+        if(await updR(r.id,snap)){await sb.from("games").update({locked:true}).eq("id",gid);reload();}
       });
     }else if(act==="unconfirm"){
       ask("結果の確定を取り消します（盤面のロックは自動では解除されません）。",async function(){
-        if(await updR(r.id,{confirmed:false}))reload();
+        if(await updR(r.id,{confirmed:false,share_snap:null,hit_row:null,hit_col:null,hit_no:null,hit_dx:null,hit_dy:null,hit_player:null,hit_color:null}))reload();
       });
     }
   });
@@ -816,7 +833,7 @@
       patch={h_team:m.left_name||"",v_team:m.right_name||"",h_score:m.left_score,v_score:m.right_score};
     }else if(f==="h_score"||f==="v_score"){
       var v=t.value===""?null:parseInt(t.value,10);
-      if(v!==null&&!(v>=0)){toast("的中数は0以上の数字です");reload();return;}
+      if(v!==null&&!(v>=0)){toast("得点は0以上の数字です");reload();return;}
       patch[f]=v;
     }else patch[f]=t.value.trim();
     if(await updR(r.id,patch))reload();
