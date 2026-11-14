@@ -50,6 +50,17 @@
   .seg button{flex:1;padding:8px;min-height:38px;font-size:14px}
   .seg button.on{background:#2f5d50;color:#fff}
   #loading{text-align:center;color:#666;margin-top:60px}
+  .bars{display:grid;grid-template-columns:22px 1fr 34px;gap:4px 8px;align-items:center;font-size:14px}
+  .bars .bar2{height:16px;border-radius:4px;background:#2f5d50;min-width:2px}
+  .bars .bar3{height:16px;border-radius:4px;background:#e9a23b;min-width:2px}
+  .hrow{display:block;width:100%;text-align:left;background:#faf8f3;color:#222;margin-top:6px;font-size:14px;line-height:1.5;padding:10px}
+  .hrow small{color:#666;display:block}
+  .tm{font-size:14px;line-height:1.6;border-bottom:1px solid #eee;padding:6px 0}
+  .note{font-size:12px;color:#666;margin-top:8px;line-height:1.5}
+  #imgBox{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;z-index:25;padding:14px}
+  #imgBox .box{background:#fff;border-radius:14px;padding:12px;width:100%;max-width:420px;max-height:92vh;overflow:auto}
+  #imgBox img{width:100%;display:block;border-radius:8px}
+  #qr{display:block;margin:8px auto 0}
   .tabs{display:flex;gap:6px;margin-top:10px}
   .tabs button{flex:1;background:#e3ded2;color:#222}
   .tabs button.on{background:#2f5d50;color:#fff}
@@ -112,12 +123,20 @@
   </div>
   <h2>参加中のルーム</h2>
   <div class="card" id="glist"></div>
+  <button class="sub" id="goStats" style="width:100%;margin-top:14px">📊 過去の結果と数字の統計</button>
   <h2>招待URLで参加する</h2>
   <div class="card">
     <input type="text" id="joinUrl" placeholder="共有されたURLを貼り付け">
     <div class="row"><button id="joinG" class="sub">ルームに参加</button></div>
     <div style="font-size:12px;color:#666;margin-top:6px">URLを直接開いても参加できます。ルームは誰でも作れて、作った人がそのルームの主催者になります。</div>
   </div>
+</div>
+
+<!-- 履歴・統計 -->
+<div id="stats" style="display:none">
+  <button class="sub" id="statsBack" style="min-height:38px;padding:6px 12px;font-size:14px">← ホーム</button>
+  <h1 style="margin-top:8px">過去の結果と統計</h1>
+  <div id="statsBody"></div>
 </div>
 
 <!-- ルーム画面 -->
@@ -159,6 +178,7 @@
       <button data-f="taken">選択済み</button>
     </div>
     <div id="board"></div>
+    <div class="row"><button class="sub" id="saveImg" style="min-width:100%">📷 盤面を画像にする（LINEで送る）</button></div>
     <div class="row" id="adminRow">
       <button class="sub" id="shX">横軸シャッフル</button>
       <button class="sub" id="shY">縦軸シャッフル</button>
@@ -182,6 +202,8 @@
   <h2>友だちを招待</h2>
   <div class="card">
     <input type="text" id="shareUrl" readonly onclick="this.select()">
+    <canvas id="qr" width="200" height="200"></canvas>
+    <div class="note" style="text-align:center">QRコードを読み取ると、このルームに参加できます</div>
     <div class="row">
       <button id="copyUrl" class="sub">URLをコピー</button>
       <button id="shareBtn">LINEなどで共有</button>
@@ -229,10 +251,16 @@
   </div>
 </div>
 
+<div id="imgBox"><div class="box">
+  <div style="font-size:14px;margin-bottom:8px">画像を長押しして「"写真"に追加」で保存できます。</div>
+  <img id="boardImg" alt="盤面画像">
+  <div class="row"><button class="sub" id="imgClose">閉じる</button><button id="imgShare">共有する</button></div>
+</div></div>
 <div id="modal"><div class="box"><p id="mmsg"></p><div class="row"><button class="sub" id="mno">やめる</button><button id="myes">実行する</button></div></div></div>
 <div id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <script>
 (function(){
   // ====== 設定（Supabaseの接続情報） ======
@@ -256,6 +284,7 @@
     $("loading").style.display=v==="loading"?"block":"none";
     $("home").style.display=v==="home"?"block":"none";
     $("game").style.display=v==="game"?"block":"none";
+    $("stats").style.display=v==="stats"?"block":"none";
   }
   function fatal(m){$("loading").textContent=m;showView("loading");}
   function shuffled(){
@@ -420,6 +449,7 @@
     $("adminRow").style.display=isAdmin()?"flex":"none";
     $("lockBtn").textContent=game.locked?"ロック解除":"ロックする";
     $("shareUrl").value=shareUrl();
+    drawQr();
 
     var cp=getP(curP);
     $("cur").innerHTML=cp?'選ぶ人：<b style="color:'+esc(cp.color)+'">● '+esc(cp.name)+'</b>（残り '+(cp.cell_limit-countOf(cp.id))+'マス）':"選ぶ人：未選択（下で参加者として追加してください）";
@@ -899,6 +929,160 @@
       patch[f]=v;
     }else patch[f]=t.value.trim();
     if(await updR(r.id,patch))reload();
+  });
+
+
+  // ---------- QRコード ----------
+  var qrFor=null;
+  function drawQr(){
+    var cv=$("qr");
+    if(!window.QRCode||!window.QRCode.toCanvas){cv.style.display="none";return;}
+    var url=shareUrl();
+    if(qrFor===url)return;
+    qrFor=url;
+    try{window.QRCode.toCanvas(cv,url,{width:200,margin:1},function(err){if(err)cv.style.display="none";});}catch(e){cv.style.display="none";}
+  }
+
+  // ---------- 盤面の画像 ----------
+  function textColorFor(hex){
+    var h=String(hex).replace("#","");if(h.length===3)h=h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+    var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+    return (0.299*r+0.587*g+0.114*b)>150?"#222":"#fff";
+  }
+  function boardCanvas(){
+    var W=1080,m=40,cell=Math.floor((W-2*m)/11),gridW=cell*11,gx=Math.floor((W-gridW)/2);
+    var headH=190,legRows=Math.ceil(players.length/2),legH=legRows*56+50,H=headH+gridW+legH+30;
+    var cv=document.createElement("canvas");cv.width=W;cv.height=H;
+    var x=cv.getContext("2d");
+    var FONT='-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif';
+    x.fillStyle="#f4f1ea";x.fillRect(0,0,W,H);
+    x.textBaseline="middle";
+    x.fillStyle="#222";x.font="bold 54px "+FONT;x.textAlign="left";
+    var title=game.name;while(x.measureText(title).width>W-2*m&&title.length>1)title=title.slice(0,-1);
+    x.fillText(title,m,60);
+    var bs=boardSides();
+    x.font="bold 38px "+FONT;x.fillStyle="#2f5d50";
+    if(bs){x.fillText("横軸：" +bs.h+"チーム",m,115);x.fillText("縦軸：" +bs.v+"チーム",m,160);}
+    else{x.font="34px "+FONT;x.fillStyle="#666";x.fillText("横軸・縦軸の数字は下の盤面のとおり",m,130);}
+    var ready=axesReady();
+    var hits={};
+    resList.forEach(function(rr){var h=hit(rr);if(h&&(!h.snap||(ready&&game.axis_x[h.col]===h.dx&&game.axis_y[h.row]===h.dy)))hits[h.row+"-"+h.col]=1;});
+    function box(cx,cy,fill,stroke){x.fillStyle=fill;x.fillRect(cx+1,cy+1,cell-2,cell-2);if(stroke){x.strokeStyle=stroke;x.lineWidth=1;x.strokeRect(cx+1.5,cy+1.5,cell-3,cell-3);}}
+    x.textAlign="center";
+    box(gx,headH,"#2f5d50");
+    for(var c=0;c<10;c++){
+      box(gx+(c+1)*cell,headH,"#2f5d50");
+      x.fillStyle="#fff";x.font="bold 44px "+FONT;x.fillText(ready?String(game.axis_x[c]):"-",gx+(c+1)*cell+cell/2,headH+cell/2+2);
+    }
+    for(var r=0;r<10;r++){
+      var cy=headH+(r+1)*cell;
+      box(gx,cy,"#2f5d50");
+      x.fillStyle="#fff";x.font="bold 44px "+FONT;x.fillText(ready?String(game.axis_y[r]):"-",gx+cell/2,cy+cell/2+2);
+      for(var c2=0;c2<10;c2++){
+        var key=r+"-"+c2,own=getP(cells[key]),cx=gx+(c2+1)*cell;
+        box(cx,cy,own?own.color:"#fff","#d6d0c2");
+        if(own){
+          var nm=own.name.slice(0,3),fs=nm.length>2?28:34;
+          x.font="bold "+fs+"px "+FONT;x.fillStyle=textColorFor(own.color);
+          x.fillText(nm,cx+cell/2,cy+cell/2+2);
+        }
+        if(hits[key]){x.strokeStyle="#e9a23b";x.lineWidth=8;x.strokeRect(cx+5,cy+5,cell-10,cell-10);}
+      }
+    }
+    var ly=headH+gridW+50;x.textAlign="left";
+    players.forEach(function(p,i){
+      var col=i%2,row=Math.floor(i/2),px=gx+col*(gridW/2),py=ly+row*56;
+      x.fillStyle=p.color;x.beginPath();x.arc(px+20,py,18,0,Math.PI*2);x.fill();
+      x.fillStyle="#222";x.font="bold 34px "+FONT;
+      var label=p.name;while(x.measureText(label).width>gridW/2-120&&label.length>1)label=label.slice(0,-1);
+      x.fillText(label,px+50,py);
+      x.font="30px "+FONT;x.fillStyle="#555";x.textAlign="right";
+      x.fillText(countOf(p.id)+"/"+p.cell_limit+"マス",px+gridW/2-24,py);x.textAlign="left";
+    });
+    return cv;
+  }
+  var imgUrl=null,imgFile=null;
+  $("saveImg").onclick=function(){
+    if(!game)return;
+    var cv=boardCanvas();
+    cv.toBlob(function(blob){
+      if(!blob){toast("画像を作れませんでした");return;}
+      if(imgUrl)URL.revokeObjectURL(imgUrl);
+      imgUrl=URL.createObjectURL(blob);
+      try{imgFile=new File([blob],"100masu.png",{type:"image/png"});}catch(e){imgFile=null;}
+      $("boardImg").src=imgUrl;$("imgBox").style.display="flex";
+    },"image/png");
+  };
+  $("imgClose").onclick=function(){$("imgBox").style.display="none";};
+  $("imgShare").onclick=async function(){
+    try{
+      if(imgFile&&navigator.canShare&&navigator.canShare({files:[imgFile]}))await navigator.share({files:[imgFile],title:game.name});
+      else toast("画像を長押しして保存してください");
+    }catch(e){}
+  };
+
+  // ---------- 履歴・統計 ----------
+  $("goStats").onclick=function(){showStats();};
+  $("statsBack").onclick=function(){showHome();};
+  async function showStats(){
+    unsubscribe();gid=null;game=null;
+    showView("stats");$("statsBody").innerHTML='<div class="card" style="color:#666">読み込み中…</div>';
+    var g=await sb.from("games").select("id,name,created_at");
+    var r=await sb.from("results").select("*");
+    var m=await sb.from("matches").select("*");
+    if(g.error||r.error){$("statsBody").innerHTML='<div class="card">読み込めませんでした（ネットワークを確認してください）</div>';return;}
+    var gm={};g.data.forEach(function(x){gm[x.id]=x;});
+    var rs=r.data.filter(function(x){return x.h_score!=null&&x.v_score!=null;});
+    var cx=[0,0,0,0,0,0,0,0,0,0],cy=[0,0,0,0,0,0,0,0,0,0];
+    rs.forEach(function(x){cx[x.h_score%10]++;cy[x.v_score%10]++;});
+    function bars(arr,cls){
+      var mx=Math.max.apply(null,arr.concat([1])),h="";
+      for(var i=0;i<10;i++)h+='<div>'+i+'</div><div><div class="'+cls+'" style="width:'+Math.round(arr[i]/mx*100)+'%"></div></div><div>'+arr[i]+'回</div>';
+      return '<div class="bars">'+h+'</div>';
+    }
+    var html='<div class="note" style="margin-top:0">対象：あなたが参加したルームの、得点が入力された結果 '+rs.length+'件</div>';
+    html+='<h2>横軸の下一桁の出現回数</h2><div class="card">'+bars(cx,"bar2")+'</div>';
+    html+='<h2>縦軸の下一桁の出現回数</h2><div class="card">'+bars(cy,"bar3")+'</div>';
+    // team tendency from matches
+    var T={};
+    (m.error?[]:m.data).forEach(function(x){
+      if(x.left_score==null||x.right_score==null||x.left_bye||x.right_bye)return;
+      [[x.left_name,x.left_score],[x.right_name,x.right_score]].forEach(function(p){
+        if(!p[0])return;
+        var t=T[p[0]]||(T[p[0]]={n:0,sum:0,d:[0,0,0,0,0,0,0,0,0,0]});
+        t.n++;t.sum+=p[1];t.d[p[1]%10]++;
+      });
+    });
+    var names=Object.keys(T).sort(function(a,b){return T[b].n-T[a].n;});
+    html+='<h2>チームごとの得点の傾向</h2><div class="card">';
+    if(!names.length)html+='<div style="color:#666;font-size:14px">対戦表に得点が入ると表示されます</div>';
+    names.forEach(function(n){
+      var t=T[n],ds=[];
+      for(var i=0;i<10;i++)if(t.d[i])ds.push(i+"の位 "+t.d[i]+"回");
+      html+='<div class="tm"><b>'+esc(n)+'</b>　'+t.n+'試合・平均 '+(t.sum/t.n).toFixed(1)+'点<br><small style="color:#555">下一桁：'+ds.join("、")+'</small></div>';
+    });
+    html+='</div>';
+    // past results
+    rs.sort(function(a,b){
+      var ga=gm[a.game_id]||{created_at:""},gb=gm[b.game_id]||{created_at:""};
+      return gb.created_at.localeCompare(ga.created_at)||a.sort_order-b.sort_order;
+    });
+    html+='<h2>過去の結果（タップでルームを開く）</h2>';
+    if(!rs.length)html+='<div class="card" style="color:#666;font-size:14px">まだ結果がありません</div>';
+    rs.forEach(function(x){
+      var g0=gm[x.game_id]||{name:"（ルーム）",created_at:""};
+      var line1=esc(g0.name)+"　"+(g0.created_at?new Date(g0.created_at).toLocaleDateString("ja-JP"):"")+(x.label?"／"+esc(x.label):"");
+      var line2="横 "+esc(x.h_team||"未定")+" "+x.h_score+" × 縦 "+esc(x.v_team||"未定")+" "+x.v_score;
+      var line3;
+      if(x.confirmed&&x.hit_no!=null)line3="→ "+x.hit_no+"マス目　"+(x.hit_player?"🎯 "+esc(x.hit_player):"該当者なし");
+      else line3="→（未確定）";
+      html+='<button class="hrow" data-id="'+x.game_id+'">'+line1+'<small>'+line2+'</small><small>'+line3+'</small></button>';
+    });
+    html+='<div class="note">※ 統計は過去の結果を集計したものです。将来の結果を保証するものではありません。</div>';
+    $("statsBody").innerHTML=html;
+  }
+  $("statsBody").addEventListener("click",function(e){
+    var b=e.target.closest(".hrow");if(b&&b.dataset.id)openGame(b.dataset.id);
   });
 
   // ---------- 共有 ----------
