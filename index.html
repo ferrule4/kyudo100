@@ -221,7 +221,7 @@
         <input type="text" id="rlabel" placeholder="名前（例：予選、決勝）" list="resLabels">
         <datalist id="resLabels"><option value="予選"><option value="決勝"></datalist>
         <div class="row"><button id="addR">結果を追加</button></div>
-        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの得点を入れると、下一桁から当たりのマスが決まります。1件あたりのチップは、合計を結果の件数で等分します。</div>
+        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの得点を入れると、下一桁から当たりのマスが決まります。結果ごとに、賞金を当たった人が総取りします（繰越チップは最初の結果に上乗せします）。</div>
       </div>
     </div>
     <h2>結果</h2>
@@ -746,14 +746,20 @@
   }
   function potInfo(){
     var cnt=Object.keys(cells).length,base=(game.chips||0)*cnt;
-    var pot=base+(game.carry_in||0),n=resList.length,share=n?Math.floor(pot/n):0;
-    return {pot:pot,base:base,cnt:cnt,n:n,share:share,rem:n?pot-share*n:0};
+    var pot=base+(game.carry_in||0),n=resList.length;
+    return {pot:pot,base:base,cnt:cnt,n:n};
+  }
+  // 結果ごとの賞金（総取り）。繰越は最初の結果に上乗せ。確定済みは確定時の金額
+  function prizeOf(r){
+    if(r.confirmed&&r.share_snap!=null)return r.share_snap;
+    var p=potInfo();
+    return p.base+(resList.indexOf(r)===0?(game.carry_in||0):0);
   }
   function carryOutNow(){
     var p=potInfo();
     if(!p.n||!resList.every(function(r){return r.confirmed;}))return 0;
-    var c=p.rem;
-    resList.forEach(function(r){var h=hit(r);var sh=(r.share_snap!=null)?r.share_snap:p.share;if(!h||!h.player)c+=sh;});
+    var c=0;
+    resList.forEach(function(r){var h=hit(r);if(!h||!h.player)c+=prizeOf(r);});
     return c;
   }
   async function syncCarry(){
@@ -769,7 +775,7 @@
     var adm=isAdmin(),p=potInfo(),allDone=p.n>0&&resList.every(function(r){return r.confirmed;});
     $("potInfo").innerHTML="賞金（当たった人の総取り）<b>"+p.pot+"</b> チップ<br>"
       +"1口 "+(game.chips||0)+" × "+p.cnt+"口 = "+p.base+" ＋ 繰越 "+(game.carry_in||0)
-      +(p.n>1?"<br>結果 "+p.n+"件 → 1件あたり <b>"+p.share+"</b> チップ"+(p.rem?"（端数 "+p.rem+" は繰越）":""):(p.n===1&&p.rem?"":"" ))
+      +(p.n>1?"<br>結果ごとに、この賞金を当たった人が総取りします（結果 "+p.n+"件）":"")
       +(p.n?"":"<br>結果を追加すると、当たった人への配分が表示されます")
       +(allDone?"<br>次のルームへの繰越：<b>"+(game.carry_out||0)+"</b> チップ":"");
     $("chipAdmin").style.display=adm?"block":"none";
@@ -792,7 +798,7 @@
         html+='<div class="mh"><span class="no">'+esc(r.label||"結果")+'</span></div>'
           +'<div style="font-size:15px">横軸：'+esc(r.h_team||"未定")+' <b>'+(r.h_score==null?"－":r.h_score)+'</b><br>縦軸：'+esc(r.v_team||"未定")+' <b>'+(r.v_score==null?"－":r.v_score)+'</b></div>';
       }
-      var t="",sh=(r.confirmed&&r.share_snap!=null)?r.share_snap:p.share;
+      var t="",sh=prizeOf(r);
       if(!h){t=axesReady()?"得点を入力すると、当たりのマスが表示されます":"盤面の数字がまだ決まっていません（横軸・縦軸のシャッフル後に表示されます）";}
       else{
         t="横軸 <b>"+h.dx+"</b> ・ 縦軸 <b>"+h.dy+"</b> → <b>"+h.no+"マス目</b>（左から"+(h.col+1)+"・上から"+(h.row+1)+"）<br>";
@@ -867,7 +873,7 @@
       if(r.h_score==null||r.v_score==null){toast("横軸・縦軸の得点を入力してください");return;}
       var hh=hit(r);
       if(!hh){toast("盤面の数字がまだ決まっていません。横軸・縦軸をシャッフルしてください");return;}
-      var snap={confirmed:true,share_snap:potInfo().share,hit_row:hh.row,hit_col:hh.col,hit_no:hh.no,hit_dx:hh.dx,hit_dy:hh.dy,hit_player:hh.player?hh.player.name:null,hit_color:hh.player?hh.player.color:null};
+      var snap={confirmed:true,share_snap:prizeOf(r),hit_row:hh.row,hit_col:hh.col,hit_no:hh.no,hit_dx:hh.dx,hit_dy:hh.dy,hit_player:hh.player?hh.player.name:null,hit_color:hh.player?hh.player.color:null};
       ask("この結果を確定します。確定すると盤面がロックされます。よろしいですか？",async function(){
         if(await updR(r.id,snap)){await sb.from("games").update({locked:true}).eq("id",gid);reload();}
       });
