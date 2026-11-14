@@ -221,7 +221,7 @@
         <input type="text" id="rlabel" placeholder="名前（例：予選、決勝）" list="resLabels">
         <datalist id="resLabels"><option value="予選"><option value="決勝"></datalist>
         <div class="row"><button id="addR">結果を追加</button></div>
-        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの得点を入れると、下一桁から当たりのマスが決まります。結果ごとに、賞金を当たった人が総取りします（繰越チップは最初の結果に上乗せします）。</div>
+        <div style="font-size:12px;color:#666;margin-top:6px">横軸のチームと縦軸のチームの得点を入れると、下一桁から当たりのマスが決まります。結果ごとに、賞金を当たった人が総取りします（該当者がいない賞金は、次の結果に繰り越されて上乗せされます）。</div>
       </div>
     </div>
     <h2>結果</h2>
@@ -410,7 +410,7 @@
     $("sPlayers").textContent=players.length;
     $("sTaken").textContent=total;
     $("sChips").textContent=game.chips||0;
-    $("sCarry").textContent=game.carry_in||0;
+    $("sCarry").textContent=potInfo().carry;
     $("sPot").textContent=potInfo().pot;
     $("lockBar").style.display=game.locked?"block":"none";
     var ready=axesReady();
@@ -744,23 +744,26 @@
     if(col<0||row<0)return null;
     return {row:row,col:col,no:row*10+col+1,dx:r.h_score%10,dy:r.v_score%10,player:getP(cells[row+"-"+col])};
   }
+  // 賞金の計算：結果を順に見て、該当者なしの賞金は次の結果に繰り越して上乗せする
+  function calcPrizes(){
+    var cnt=Object.keys(cells).length,base=(game.chips||0)*cnt,c=game.carry_in||0,map={},next=null;
+    resList.forEach(function(r){
+      var prize=(r.confirmed&&r.share_snap!=null)?r.share_snap:base+c;
+      map[r.id]=prize;
+      if(!r.confirmed&&next===null)next=prize;
+      if(r.confirmed){var h=hit(r);c=(h&&h.player)?0:prize;}else c=0;
+    });
+    if(next===null)next=base+c;
+    return {cnt:cnt,base:base,map:map,next:next,end:c};
+  }
   function potInfo(){
-    var cnt=Object.keys(cells).length,base=(game.chips||0)*cnt;
-    var pot=base+(game.carry_in||0),n=resList.length;
-    return {pot:pot,base:base,cnt:cnt,n:n};
+    var p=calcPrizes();
+    return {pot:p.next,base:p.base,cnt:p.cnt,n:resList.length,carry:p.next-p.base};
   }
-  // 結果ごとの賞金（総取り）。繰越は最初の結果に上乗せ。確定済みは確定時の金額
-  function prizeOf(r){
-    if(r.confirmed&&r.share_snap!=null)return r.share_snap;
-    var p=potInfo();
-    return p.base+(resList.indexOf(r)===0?(game.carry_in||0):0);
-  }
+  function prizeOf(r){return calcPrizes().map[r.id];}
   function carryOutNow(){
-    var p=potInfo();
-    if(!p.n||!resList.every(function(r){return r.confirmed;}))return 0;
-    var c=0;
-    resList.forEach(function(r){var h=hit(r);if(!h||!h.player)c+=prizeOf(r);});
-    return c;
+    if(!resList.length||!resList.every(function(r){return r.confirmed;}))return 0;
+    return calcPrizes().end;
   }
   async function syncCarry(){
     if(!game||!isAdmin())return;
@@ -774,7 +777,7 @@
     pendingRes=false;
     var adm=isAdmin(),p=potInfo(),allDone=p.n>0&&resList.every(function(r){return r.confirmed;});
     $("potInfo").innerHTML="賞金（当たった人の総取り）<b>"+p.pot+"</b> チップ<br>"
-      +"1口 "+(game.chips||0)+" × "+p.cnt+"口 = "+p.base+" ＋ 繰越 "+(game.carry_in||0)
+      +"1口 "+(game.chips||0)+" × "+p.cnt+"口 = "+p.base+" ＋ 繰越 "+p.carry
       +(p.n>1?"<br>結果ごとに、この賞金を当たった人が総取りします（結果 "+p.n+"件）":"")
       +(p.n?"":"<br>結果を追加すると、当たった人への配分が表示されます")
       +(allDone?"<br>次のルームへの繰越：<b>"+(game.carry_out||0)+"</b> チップ":"");
